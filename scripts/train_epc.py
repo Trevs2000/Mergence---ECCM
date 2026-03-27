@@ -1,46 +1,60 @@
+"""
+train_epc.py — Train per-task EPC models and export ECCM weights.
+
+Trains three EPCTrainer instances:
+  - fraud-only   → epc_model_fraud.pkl
+  - churn-only   → epc_model_churn.pkl
+  - combined     → epc_model.pkl  (backward-compat fallback)
+
+Feature importances from each RF are normalised to produce the
+task-specific ECCM weights written to models/eccm_weights.json.
+
+Usage:
+    python scripts/train_epc.py
+"""
+
+import json
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from metrics.epc import EPCTrainer
 
-# Load all merge results
-fraud_results = pd.read_csv("./results/merges/fraud/merge_results_new.csv")
-churn_results = pd.read_csv("./results/merges/churn/merge_results_new.csv")
 
-# Combine fraud + churn merge history
-all_merges = pd.concat([fraud_results, churn_results], ignore_index=True)
-print(f"Training EPC on {len(all_merges)} merge experiments...\n")
+def train_and_save(name: str, df: pd.DataFrame, path: str) -> dict:
+    """Train one EPCTrainer, print metrics, save, and return ECCM weights."""
+    print(f"\n{'='*55}")
+    print(f"  {name}  ({len(df)} rows)")
+    print(f"{'='*55}")
 
-# 1) Train/test split for proper evaluation
-train_merges, test_merges = train_test_split(
-    all_merges, test_size=0.2, random_state=42
-)
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+    epc  = EPCTrainer(k=5)
+    tr2  = epc.train(train_df, n_trees=100)
+    te2  = epc._rf_model.score(
+        test_df[["psc","fsc","rsc"]].values, test_df["improvement"].values
+    )
+    print(f"  Train R²={tr2:.4f}  |  Test R²={te2:.4f}")
 
-# 2) Train EPC on train_merges only
-epc = EPCTrainer()
-train_r2 = epc.train(train_merges, n_trees=100)
-print(f"Train R²: {train_r2:.4f}")
+    imp  = epc.feature_importances_
+    total = imp.sum()
+    w    = {"w_psc": float(imp[0]/total), "w_fsc": float(imp[1]/total),
+            "w_rsc": float(imp[2]/total), "train_r2": tr2, "test_r2": te2}
+    print(f"  Weights → PSC={w['w_psc']:.3f}  FSC={w['w_fsc']:.3f}  RSC={w['w_rsc']:.3f}")
 
-# 3) Evaluate on held‑out test_merges
-X_test = test_merges[["psc", "fsc", "rsc"]].values
-y_test = test_merges["improvement"].values
-test_r2 = epc.model.score(X_test, y_test)
-print(f"Test R²: {test_r2:.4f}")
+    epc.save(path)
+    print(f"  Saved → {path}")
+    return w
 
-# 4) Feature importances and normalised ECCM weights
-importances = epc.model.feature_importances_
-print("\nFeature Importances:")
-print(f"  PSC: {importances[0]:.3f}")
-print(f"  FSC: {importances[1]:.3f}")
-print(f"  RSC: {importances[2]:.3f}")
 
-total = importances.sum()
-w_psc = importances[0] / total
-w_fsc = importances[1] / total
-w_rsc = importances[2] / total
-print(f"\nOptimised ECCM weights:")
-print(f"  w_PSC = {w_psc:.3f}")
-print(f"  w_FSC = {w_fsc:.3f}")
-print(f"  w_RSC = {w_rsc:.3f}")
+if __name__ == "__main__":
+    fraud = pd.read_csv("./results/merges/fraud/merge_results_new_eccm.csv")
+    churn = pd.read_csv("./results/merges/churn/merge_results_new_eccm.csv")
+    all_  = pd.concat([fraud, churn], ignore_index=True)
 
-# 5) Save trained EPC model
-epc.save("./models/epc_model.pkl")
+    weights = {
+        "fraud":    train_and_save("Fraud",    fraud, "./models/epc_model_fraud.pkl"),
+        "churn":    train_and_save("Churn",    churn, "./models/epc_model_churn.pkl"),
+        "combined": train_and_save("Combined", all_,  "./models/epc_model.pkl"),
+    }
+
+    with open("./models/eccm_weights.json", "w") as f:
+        json.dump(weights, f, indent=2)
+    print("\nWeights written → ./models/eccm_weights.json")

@@ -1,235 +1,200 @@
+"""
+merge_with_m2n2.py
+
+CMA-ES blend ratio optimisation for top-N ECCM-selected model pairs.
+
+Why CMA-ES (not scalar optimisation)?
+  CMA-ES is retained for alignment with the M2N2 (Model Merging via
+  Natural Evolution) framework explored in this thesis. It demonstrates
+  that an evolutionary search can find better blend ratios than a fixed
+  grid, addressing RQ3.
+
+  The 2D padding workaround (CMA-ES requires dim >= 2) is acknowledged
+  in the thesis methodology: only x[0] is used as the blend ratio;
+  x[1] is a dummy variable that satisfies the dimension requirement.
+
+  The original DualEngineMerger (CMA-ES + scalar fallback) has been
+  removed. A fallback that silently overrides the evolutionary engine
+  weakens the thesis argument. CMA-ES is used exclusively so that if it
+  converges to a suboptimal ratio on a specific pair, that is an honest
+  empirical finding, not an error to be hidden.
+
+Usage:
+    python scripts/merge_with_m2n2.py
+"""
+
+import os
+from datetime import datetime
+from pathlib import Path
+
+import cma
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
-import cma
-from pathlib import Path
 from sklearn.metrics import roc_auc_score
-from datetime import datetime
-import os
+from sklearn.model_selection import train_test_split
 
-from scipy.optimize import minimize_scalar
+from scripts.select_top_pairs import select_top_pairs
 
 
-class DualEngineMerger:
+# ── CMA-ES optimiser ──────────────────────────────────────────────────────────
+class CMAESMerger:
     """
-    Optimise blend weight for a model pair using:
-      1) CMA-ES (M2N2-style evolutionary search)
-      2) Fallback: 1D bounded optimisation (minimize_scalar)
+    Optimise the blend ratio r in [0,1] via CMA-ES.
 
-    Returns the better of the two.
+    Objective: maximise AUC(r * P_a + (1-r) * P_b, y_val)
+    CMA-ES minimises, so we minimise negative AUC.
     """
 
-    def __init__(
-        self,
-        cma_sigma0: float = 0.3,
-        cma_max_iterations: int = 50,
-        cma_population_size: int = 10,
-        scalar_max_iter: int = 100,
-    ):
-        self.cma_sigma0 = cma_sigma0
-        self.cma_max_iterations = cma_max_iterations
-        self.cma_population_size = cma_population_size
-        self.scalar_max_iter = scalar_max_iter
+    def __init__(self, sigma0: float = 0.3, max_iter: int = 50, popsize: int = 10):
+        self.sigma0   = sigma0
+        self.max_iter = max_iter
+        self.popsize  = popsize
 
-    def _precompute_proba(self, model_a, model_b, X_val):
-        y_proba_a = model_a.predict_proba(X_val)[:, 1]
-        y_proba_b = model_b.predict_proba(X_val)[:, 1]
-        return y_proba_a, y_proba_b
-
-    def _neg_auc(self, ratio, y_proba_a, y_proba_b, y_val):
-        ratio = np.clip(ratio, 0.0, 1.0)
-        blend = ratio * y_proba_a + (1 - ratio) * y_proba_b
-        return -roc_auc_score(y_val, blend)
-
-    def run_cmaes(self, y_proba_a, y_proba_b, y_val):
+    def optimise(self, model_a, model_b, X_val: np.ndarray, y_val: np.ndarray) -> dict:
         """
-        CMA-ES primary engine.
-
-        CMA-ES requires dim >= 2; we pad with a dummy variable.
-        Only x[0] is used as the blend ratio. For production,
-        scipy.optimize.minimize_scalar would be cleaner, but CMA-ES
-        is used here to align with the M2N2 evolutionary optimisation framework.
+        Returns:
+            best_ratio    — optimal blend weight for model_a  (float in [0,1])
+            best_auc      — AUC at optimal ratio
+            n_evaluations — total fitness evaluations used
         """
-        x0 = [0.5, 0.5]
+        pa = model_a.predict_proba(X_val)[:, 1]
+        pb = model_b.predict_proba(X_val)[:, 1]
+
+        def neg_auc(x):
+            r = np.clip(x[0], 0.0, 1.0)
+            return -roc_auc_score(y_val, r * pa + (1 - r) * pb)
 
         opts = cma.CMAOptions()
-        opts["maxiter"] = self.cma_max_iterations
-        opts["popsize"] = self.cma_population_size
-        opts["bounds"] = [[0.0, 0.0], [1.0, 1.0]]
+        opts["maxiter"] = self.max_iter
+        opts["popsize"] = self.popsize
+        opts["bounds"]  = [[0.0, 0.0], [1.0, 1.0]]  # bounds for [ratio, dummy]
         opts["verbose"] = -9
-        opts["seed"] = 42
+        opts["seed"]    = 42
 
-        es = cma.CMAEvolutionStrategy(x0, self.cma_sigma0, opts)
-        n_eval = 0
-
+        # x[0] = blend ratio, x[1] = dummy (satisfies CMA-ES dim >= 2 requirement)
+        es      = cma.CMAEvolutionStrategy([0.5, 0.5], self.sigma0, opts)
+        n_evals = 0
         while not es.stop():
-            solutions = es.ask()
-            fitnesses = []
-            for s in solutions:
-                r = np.clip(s[0], 0.0, 1.0)
-                neg_auc = self._neg_auc(r, y_proba_a, y_proba_b, y_val)
-                fitnesses.append(neg_auc)
-            es.tell(solutions, fitnesses)
-            n_eval += len(solutions)
+            solutions  = es.ask()
+            es.tell(solutions, [neg_auc(s) for s in solutions])
+            n_evals   += len(solutions)
 
-        res = es.result
-        best_ratio = np.clip(res.xbest[0], 0.0, 1.0)
-        best_auc = -res.fbest
-
+        r = es.result
         return {
-            "engine": "cmaes",
-            "best_ratio": float(best_ratio),
-            "best_auc": float(best_auc),
-            "n_evaluations": int(n_eval),
-            "converged": True,
+            "best_ratio":    float(np.clip(r.xbest[0], 0.0, 1.0)),
+            "best_auc":      float(-r.fbest),
+            "n_evaluations": int(n_evals),
         }
 
-    def run_scalar(self, y_proba_a, y_proba_b, y_val):
-        """1D bounded optimisation via minimize_scalar."""
-        def neg_auc(r):
-            return self._neg_auc(r, y_proba_a, y_proba_b, y_val)
 
-        res = minimize_scalar(
-            neg_auc,
-            bounds=(0.0, 1.0),
-            method="bounded",
-            options={"maxiter": self.scalar_max_iter},
-        )
-
-        return {
-            "engine": "scalar",
-            "best_ratio": float(res.x),
-            "best_auc": float(-res.fun),
-            "n_evaluations": int(res.nfev),
-            "converged": bool(res.success),
-        }
-
-    def optimise(self, model_a, model_b, X_val, y_val):
-        """
-        Run CMA-ES, then scalar optimisation, and return the better result.
-        """
-        y_proba_a, y_proba_b = self._precompute_proba(model_a, model_b, X_val)
-
-        cma_res = self.run_cmaes(y_proba_a, y_proba_b, y_val)
-        scalar_res = self.run_scalar(y_proba_a, y_proba_b, y_val)
-
-        #Picks better AUC; if equal, prefer CMA-ES for thesis
-        if scalar_res["best_auc"] > cma_res["best_auc"]:
-            return {
-                **scalar_res,
-                "secondary_auc": cma_res["best_auc"],
-                "secondary_engine": "cmaes",
-            }
-        else:
-            return {
-                **cma_res,
-                "secondary_auc": scalar_res["best_auc"],
-                "secondary_engine": "scalar",
-            }
-
-
+# ── Full M2N2 pipeline ────────────────────────────────────────────────────────
 class M2N2Pipeline:
     """
-    Full pipeline: load models, select top pairs by ECCM,
-    run dual-engine optimisation, compare with fixed-ratio results.
+    Runs CMA-ES on the top-N ECCM-ranked pairs and records results.
     """
 
     def __init__(
         self,
         models_dir: str,
-        X_val,
-        y_val,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
         output_dir: str,
-        cma_sigma0: float = 0.3,
-        cma_max_iter: int = 50,
-        cma_pop_size: int = 10,
-        scalar_max_iter: int = 100,
+        sigma0: float = 0.3,
+        max_iter: int = 50,
+        popsize: int = 10,
     ):
         self.models_dir = models_dir
-        self.X_val = X_val
-        self.y_val = y_val
+        self.X_val      = X_val
+        self.y_val      = y_val
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        self.merger     = CMAESMerger(sigma0=sigma0, max_iter=max_iter, popsize=popsize)
+        self._cache: dict = {}
 
-        self.merger = DualEngineMerger(
-            cma_sigma0=cma_sigma0,
-            cma_max_iterations=cma_max_iter,
-            cma_population_size=cma_pop_size,
-            scalar_max_iter=scalar_max_iter,
-        )
-        self.models_cache = {}
-        self.results = []
-
-    def load_model(self, model_id: str):
-        if model_id not in self.models_cache:
-            path = Path(self.models_dir) / f"{model_id}.pkl"
-            self.models_cache[model_id] = joblib.load(path)
-        return self.models_cache[model_id]
-
-    def run(self, top_pairs_df: pd.DataFrame, fixed_results_csv: str):
-        fixed_df = pd.read_csv(fixed_results_csv)
-
-        for i, row in top_pairs_df.iterrows():
-            mid_a = row["model_a"]
-            mid_b = row["model_b"]
-
-            model_a = self.load_model(mid_a)
-            model_b = self.load_model(mid_b)
-
-            opt_res = self.merger.optimise(
-                model_a, model_b, self.X_val, self.y_val
+    def _load(self, model_id: str):
+        if model_id not in self._cache:
+            self._cache[model_id] = joblib.load(
+                Path(self.models_dir) / f"{model_id}.pkl"
             )
+        return self._cache[model_id]
 
-            pair_fixed = fixed_df[
-                (fixed_df["model_a"] == mid_a)
-                & (fixed_df["model_b"] == mid_b)
-            ]
-            best_fixed_auc = pair_fixed["auc_merged"].max()
+    def run(self, top_pairs: pd.DataFrame, fixed_csv: str) -> pd.DataFrame:
+        """
+        Args:
+            top_pairs: [model_a, model_b, eccm] from select_top_pairs()
+            fixed_csv: path to merge_results_new_eccm.csv (for baseline AUC)
 
-            auc_a = roc_auc_score(
-                self.y_val, model_a.predict_proba(self.X_val)[:, 1]
-            )
-            auc_b = roc_auc_score(
-                self.y_val, model_b.predict_proba(self.X_val)[:, 1]
-            )
-            best_parent = max(auc_a, auc_b)
+        Returns:
+            DataFrame saved to m2n2_results.csv
+        """
+        fixed = pd.read_csv(fixed_csv)
+        rows  = []
 
-            result = {
-                "model_a": mid_a,
-                "model_b": mid_b,
-                "eccm": row["eccm"],
-                "auc_a": float(auc_a),
-                "auc_b": float(auc_b),
-                "best_parent_auc": float(best_parent),
-                "fixed_best_auc": float(best_fixed_auc),
-                "fixed_improvement": float(best_fixed_auc - best_parent),
-                "best_engine": opt_res["engine"],
-                "opt_best_ratio": opt_res["best_ratio"],
-                "opt_best_auc": opt_res["best_auc"],
-                "opt_improvement": float(opt_res["best_auc"] - best_parent),
-                "opt_vs_fixed": float(opt_res["best_auc"] - best_fixed_auc),
-                "opt_n_evals": opt_res["n_evaluations"],
-                "secondary_engine": opt_res["secondary_engine"],
-                "secondary_auc": opt_res["secondary_auc"],
-                "timestamp": datetime.now().isoformat(),
-            }
+        for i, pair in top_pairs.iterrows():
+            mid_a, mid_b = pair["model_a"], pair["model_b"]
+            ma = self._load(mid_a)
+            mb = self._load(mid_b)
 
-            self.results.append(result)
+            opt = self.merger.optimise(ma, mb, self.X_val, self.y_val)
 
-            delta = result["opt_vs_fixed"]
-            marker = "+" if delta > 0 else " "
+            mask       = (fixed["model_a"] == mid_a) & (fixed["model_b"] == mid_b)
+            best_fixed = float(fixed.loc[mask, "auc_merged"].max())
+            auc_a      = roc_auc_score(self.y_val, ma.predict_proba(self.X_val)[:, 1])
+            auc_b      = roc_auc_score(self.y_val, mb.predict_proba(self.X_val)[:, 1])
+            best_par   = max(auc_a, auc_b)
+
+            rows.append({
+                "model_a":           mid_a,
+                "model_b":           mid_b,
+                "eccm":              pair["eccm"],
+                "auc_a":             round(auc_a,          10),
+                "auc_b":             round(auc_b,          10),
+                "best_parent_auc":   round(best_par,       10),
+                "fixed_best_auc":    round(best_fixed,     10),
+                "fixed_improvement": round(best_fixed - best_par, 10),
+                "opt_best_ratio":    opt["best_ratio"],
+                "opt_best_auc":      round(opt["best_auc"], 10),
+                "opt_improvement":   round(opt["best_auc"] - best_par, 10),
+                "opt_vs_fixed":      round(opt["best_auc"] - best_fixed, 10),
+                "opt_n_evals":       opt["n_evaluations"],
+                "timestamp":         datetime.now().isoformat(),
+            })
+
+            delta = rows[-1]["opt_vs_fixed"]
             print(
-                f"{i+1:3d}. {mid_a} + {mid_b}  |  "
-                f"Fixed: {best_fixed_auc:.6f}  |  "
-                f"Opt({opt_res['engine']}): {opt_res['best_auc']:.6f} "
-                f"(r={opt_res['best_ratio']:.4f})  |  "
-                f"Δ={delta:+.6f} {marker}"
+                f"  {i+1:3d}. {mid_a} + {mid_b}  |  "
+                f"Fixed: {best_fixed:.6f}  |  "
+                f"CMA-ES: {opt['best_auc']:.6f} (r={opt['best_ratio']:.4f})  |  "
+                f"Δ={delta:+.6f}"
             )
 
-        results_df = pd.DataFrame(self.results)
-        csv_path = f"{self.output_dir}/m2n2_results.csv"
-        results_df.to_csv(csv_path, index=False)
-        print(f"\nSaved {len(self.results)} results to {csv_path}")
+        df = pd.DataFrame(rows)
+        df.to_csv(f"{self.output_dir}/m2n2_results.csv", index=False)
+        print(f"\nSaved {len(df)} results → {self.output_dir}/m2n2_results.csv")
+        return df
 
-        return results_df
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+
+    # Fraud
+    fraud_df = pd.read_csv("./data/fraud_preprocessed.csv")
+    X_f = fraud_df.drop("Class", axis=1).values
+    y_f = fraud_df["Class"].values
+    _, X_val_f, _, y_val_f = train_test_split(
+        X_f, y_f, test_size=0.2, random_state=0, stratify=y_f
+    )
+    top_f = select_top_pairs("./results/merges/fraud/merge_results_new_eccm.csv", 50)
+    M2N2Pipeline("./models/fraud", X_val_f, y_val_f, "./results/merges/fraud").run(
+        top_f, "./results/merges/fraud/merge_results_new_eccm.csv"
+    )
+
+    # Churn
+    churn_val = pd.read_csv("./data/churn_val_with_churn_col.csv")
+    X_val_c   = churn_val.drop("Churn", axis=1).values
+    y_val_c   = churn_val["Churn"].values
+    top_c = select_top_pairs("./results/merges/churn/merge_results_new_eccm.csv", 50)
+    M2N2Pipeline("./models/churn", X_val_c, y_val_c, "./results/merges/churn").run(
+        top_c, "./results/merges/churn/merge_results_new_eccm.csv"
+    )

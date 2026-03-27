@@ -1,31 +1,29 @@
+"""
+select_top_pairs.py — Select top-N model pairs by ECCM score.
+Used as input to merge_with_m2n2.py.
+"""
+
 import pandas as pd
 
 
 def select_top_pairs(results_csv: str, top_n: int = 50) -> pd.DataFrame:
     """
-    Selecting top N model pairs by ECCM score from a fixed-ratio merge results CSV.
+    Return the top-N unique pairs ranked by ECCM score (descending).
 
-    Assumes the CSV has at least:
-        - model_a
-        - model_b
-        - eccm
+    ECCM is constant across blend ratios for a given pair, so duplicate
+    rows are dropped before ranking.
 
-    ECCM is computed per pair, not per blend ratio, so we can
-    safely drop duplicate (model_a, model_b) rows.
+    Args:
+        results_csv: path to merge_results_new_eccm.csv
+        top_n:       number of pairs to select
+
+    Returns:
+        DataFrame with columns [model_a, model_b, eccm]
     """
-    df = pd.read_csv(results_csv)
+    df   = pd.read_csv(results_csv)
+    uniq = df.drop_duplicates(subset=["model_a", "model_b"], keep="first")
+    top  = uniq.nlargest(top_n, "eccm")[["model_a", "model_b", "eccm"]].reset_index(drop=True)
 
-    #Deduplicating pairs; ECCM is the same across ratios for a given pair
-    unique_pairs = df.drop_duplicates(subset=["model_a", "model_b"], keep="first")
-
-    #Sorting by ECCM descending and take top N
-    top_pairs = unique_pairs.nlargest(top_n, "eccm")
-
-    print(f"Selected {len(top_pairs)} pairs from {len(unique_pairs)} total")
-    print(
-        f"ECCM range: {top_pairs['eccm'].min():.4f} – "
-        f"{top_pairs['eccm'].max():.4f}"
-    )
-
-    #Only returning what the optimisation pipeline actually needs
-    return top_pairs[["model_a", "model_b", "eccm"]].reset_index(drop=True)
+    print(f"Selected {len(top)} / {len(uniq)} pairs  "
+          f"(ECCM {top['eccm'].min():.4f} – {top['eccm'].max():.4f})")
+    return top

@@ -1,137 +1,106 @@
-import pandas as pd
-import joblib
-from pathlib import Path
-import matplotlib.pyplot as plt
+"""
+xai_explanations.py
 
-#---------- 1. Loaders ----------
+Generates plain-English XAI narratives and bar-chart plots for
+the top-N merge pairs.  Used by run_xai_global.py.
+
+Simplified from original:
+  - Removed load_model() (unused — models are never loaded here)
+  - Merged row_fixed and row_m2n2 into a single joined row (as run_xai_global
+    already does the join before calling these functions)
+  - Removed redundant branching in explain_pair_global
+"""
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+
+# ── Loaders ───────────────────────────────────────────────────────────────────
 
 def load_fixed_results(task: str) -> pd.DataFrame:
-    path = f"./results/merges/{task}/merge_results_new_eccm.csv"
-    return pd.read_csv(path)
+    return pd.read_csv(f"./results/merges/{task}/merge_results_new_eccm.csv")
 
 
 def load_m2n2_results(task: str) -> pd.DataFrame:
-    path = f"./results/merges/{task}/m2n2_results.csv"
-    return pd.read_csv(path)
+    return pd.read_csv(f"./results/merges/{task}/m2n2_results.csv")
 
 
-def load_model(task: str, model_id: str):
-    path = Path(f"./models/{task}") / f"{model_id}.pkl"
-    return joblib.load(path)
+# ── XAI narrative ─────────────────────────────────────────────────────────────
 
-
-#---------- 2. Natural language explanations ----------
-
-def explain_pair_global(row_fixed: pd.Series,
-                        row_m2n2: pd.Series,
-                        task: str) -> str:
+def explain_pair(row: pd.Series, task: str) -> str:
     """
-    Explains, in text, why this pair was merged and
-    what M2N2 added on top of fixed ratios.
+    Generate a plain-English explanation for a single merged pair.
+
+    Args:
+        row:  a row from the joined fixed + m2n2 DataFrame
+              (produced by run_xai_global joining on model_a, model_b)
+        task: "fraud" or "churn"
+
+    Returns:
+        Multi-sentence explanation string
     """
+    a, b    = row["model_a"], row["model_b"]
+    psc     = row["psc"]
+    fsc     = row["fsc"]
+    rsc     = row["rsc"]
+    eccm    = row["eccm_fixed"]
+    base_i  = row["improvement"]
+    opt_r   = row["opt_best_ratio"]
+    opt_i   = row["opt_improvement"]
+    delta   = row["opt_vs_fixed"]
 
-    a = row_fixed["model_a"]
-    b = row_fixed["model_b"]
+    agreement = "often agree" if fsc > 0.9 else "agree on most cases" if fsc > 0.65 else "frequently disagree"
+    ranking   = "very similar" if rsc > 0.9 else "moderately similar"
 
-    psc = row_fixed["psc"]
-    fsc = row_fixed["fsc"]
-    rsc = row_fixed["rsc"]
-    eccm = row_fixed["eccm_fixed"]
-    base_impr = row_fixed["improvement"]
-
-    opt_ratio = row_m2n2["opt_best_ratio"]
-    opt_impr = row_m2n2["opt_improvement"]
-    delta_vs_fixed = row_m2n2["opt_vs_fixed"]
-
-    #template-style language
-    text = []
-
-    text.append(
-        f"For {task}, models {a} and {b} were selected because "
-        f"their overall ECCM compatibility score was {eccm:.3f}."
-    )
-
-    text.append(
-        f"Structurally, PSC={psc:.3f}, FSC={fsc:.3f}, and RSC={rsc:.3f}, "
-        f"which indicates that the models {'often agree' if psc > 0.9 else 'disagree on some cases'} "
-        f"and have {'very similar' if rsc > 0.9 else 'moderately similar'} ranking behaviour."
-    )
-
-    if base_impr >= 0:
-        text.append(
-            f"Using the simple fixed ratios, the best merge improved AUC by "
-            f"{base_impr:.6f} over the better parent."
-        )
-    else:
-        text.append(
-            f"Using the simple fixed ratios, the best merge slightly reduced AUC "
-            f"by {abs(base_impr):.6f} compared to the better parent."
-        )
-
-    text.append(
-        f"The M2N2-style optimiser then searched all blend ratios between 0 and 1 "
-        f"and found an optimal weight of {opt_ratio:.3f} for model {a} "
-        f"(and {1 - opt_ratio:.3f} for {b})."
-    )
-
-    if delta_vs_fixed > 0:
-        text.append(
-            f"This tuning increased AUC by an additional {delta_vs_fixed:.6f} "
-            f"beyond the best fixed ratio."
-        )
-    elif delta_vs_fixed < 0:
-        text.append(
-            f"In this case, the optimiser did not improve on the fixed grid "
-            f"(AUC decreased by {abs(delta_vs_fixed):.6f}), suggesting that the "
-            f"simple ratios were already near-optimal."
-        )
-    else:
-        text.append(
-            "The optimiser matched, but did not exceed, the best fixed-ratio AUC, "
-            "which is consistent with a fairly flat performance landscape."
-        )
-
-    return " ".join(text)
+    lines = [
+        f"For {task}, models {a} and {b} were selected with ECCM={eccm:.3f}.",
+        f"PSC={psc:.3f}, FSC={fsc:.3f}, RSC={rsc:.3f}: "
+        f"predictions {agreement} and feature rankings are {ranking}.",
+        (f"Fixed-ratio merging improved AUC by {base_i:.6f}." if base_i >= 0
+         else f"Fixed-ratio merging reduced AUC by {abs(base_i):.6f}."),
+        f"CMA-ES found an optimal blend ratio of {opt_r:.3f} for {a}.",
+        (f"This gained an additional {delta:.6f} AUC over the fixed grid."
+         if delta > 0 else
+         f"The fixed grid was already near-optimal (CMA-ES delta = {delta:.6f})."),
+    ]
+    return " ".join(lines)
 
 
-#---------- 3. Simple plots per pair ----------
+# ── Plots ─────────────────────────────────────────────────────────────────────
 
-def plot_pair_metrics(row_fixed: pd.Series,
-                      row_m2n2: pd.Series,
-                      task: str,
-                      out_dir: str):
+def plot_pair(row: pd.Series, task: str, out_dir: str):
+    """
+    Save two bar charts for a pair:
+      1. PSC / FSC / RSC sub-metric scores
+      2. Best parent AUC vs fixed-merge AUC vs CMA-ES-merge AUC
+    """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
+    a, b = row["model_a"], row["model_b"]
+    stem = f"{task}_{a}_{b}"
 
-    a = row_fixed["model_a"]
-    b = row_fixed["model_b"]
+    # Sub-metrics bar
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.bar(["PSC", "FSC", "RSC"],
+           [row["psc"], row["fsc"], row["rsc"]],
+           color=["#4c72b0", "#55a868", "#c44e52"])
+    ax.set_ylim(0, 1)
+    ax.set_title(f"{task} — {a} + {b}")
+    ax.set_ylabel("Score")
+    fig.tight_layout()
+    fig.savefig(f"{out_dir}/{stem}_metrics.png", dpi=150)
+    plt.close(fig)
 
-    #Bar plot for PSC/FSC/RSC
-    metrics = ["psc", "fsc", "rsc"]
-    values = [row_fixed[m] for m in metrics]
-
-    plt.figure(figsize=(4, 3))
-    plt.bar(metrics, values, color=["#4c72b0", "#55a868", "#c44e52"])
-    plt.ylim(0, 1)
-    plt.title(f"{task} – {a} + {b} similarity metrics")
-    plt.ylabel("Score")
-    plt.tight_layout()
-    plt.savefig(Path(out_dir) / f"{task}_{a}_{b}_metrics.png", dpi=150)
-    plt.close()
-
-    #Bar plot for AUC: best parent vs fixed vs M2N2
-    best_parent = row_m2n2["best_parent_auc"]
-    fixed = row_m2n2["fixed_best_auc"]
-    opt = row_m2n2["opt_best_auc"]
-
-    labels = ["Best parent", "Fixed merge", "Optimised merge"]
-    vals = [best_parent, fixed, opt]
-
-    plt.figure(figsize=(4, 3))
-    plt.bar(labels, vals, color=["#4c72b0", "#55a868", "#c44e52"])
-    plt.ylim(min(vals) - 0.001, max(vals) + 0.001)
-    plt.xticks(rotation=20)
-    plt.title(f"{task} – {a} + {b} AUC comparison")
-    plt.ylabel("AUC")
-    plt.tight_layout()
-    plt.savefig(Path(out_dir) / f"{task}_{a}_{b}_auc.png", dpi=150)
-    plt.close()
+    # AUC comparison bar
+    vals   = [row["best_parent_auc"], row["fixed_best_auc"], row["opt_best_auc"]]
+    labels = ["Best parent", "Fixed merge", "CMA-ES merge"]
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.bar(labels, vals, color=["#4c72b0", "#55a868", "#c44e52"])
+    ax.set_ylim(min(vals) - 0.001, max(vals) + 0.001)
+    ax.tick_params(axis="x", rotation=20)
+    ax.set_title(f"{task} — {a} + {b} AUC")
+    ax.set_ylabel("AUC")
+    fig.tight_layout()
+    fig.savefig(f"{out_dir}/{stem}_auc.png", dpi=150)
+    plt.close(fig)
