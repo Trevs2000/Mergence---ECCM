@@ -1,5 +1,5 @@
 """
-select_top_pairs.py — Select top-N model pairs by ECCM score.
+select_top_pairs.py - Select top-N model pairs by ECCM score.
 Used as input to merge_with_m2n2.py.
 """
 

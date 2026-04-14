@@ -1,17 +1,17 @@
 """
-streamlit_app.py — Mergence ECCM Platform
+streamlit_app.py - Mergence ECCM Platform
 
 Tab 1  Compatibility Simulator   upload → scores → XAI → merge
 Tab 2  Pair Analysis             radar / blend curve / features / distributions
 Tab 3  About & How To Use
 
 UX decisions in this version:
-  - Feature importance charts removed from Tab 1 (they live in Tab 2 — no duplication)
+  - Feature importance charts removed from Tab 1 (they live in Tab 2 - no duplication)
   - Tab 1 is kept to: upload → badge → scores → EPC table → XAI → merge only
   - Tab 2 groups all visual analysis; every chart has a short caption
-  - Captions are one sentence maximum — just enough to orient a first-time reader
+  - Captions are one sentence maximum - just enough to orient a first-time reader
   - Onboarding is a single collapsed expander so it doesn't clutter the page
-  - No repeated dividers between every section — used only where sections really change
+  - No repeated dividers between every section - used only where sections really change
   - hex_to_rgba() fixes the Plotly scatterpolar fillcolor crash
 """
 
@@ -68,7 +68,7 @@ div[data-testid="stTextInput"] {
 
 # ── Colour helper ──────────────────────────────────────────────────────────────
 def hex_to_rgba(hex_colour: str, alpha: float) -> str:
-    """'#rrggbb' → 'rgba(r,g,b,alpha)'  — Plotly scatterpolar requires rgba, not 8-digit hex."""
+    """'#rrggbb' → 'rgba(r,g,b,alpha)'  - Plotly scatterpolar requires rgba, not 8-digit hex."""
     h = hex_colour.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
@@ -78,7 +78,7 @@ COLOURS = {"PSC": "#4c72b0", "FSC": "#55a868", "RSC": "#c44e52", "ECCM": "#8172b
 
 # ── BlendedModel ──────────────────────────────────────────────────────────────
 class BlendedModel(BaseEstimator, ClassifierMixin):
-    """Sklearn-compatible blended RF pair — has feature_importances_, predict_proba, predict."""
+    """Sklearn-compatible blended RF pair - has feature_importances_, predict_proba, predict."""
     def __init__(self, model_a=None, model_b=None, ratio: float = 0.5):
         self.model_a, self.model_b, self.ratio = model_a, model_b, ratio
 
@@ -122,10 +122,10 @@ def load_epc(task: str) -> EPCTrainer:
 
 # ── Data resolution ───────────────────────────────────────────────────────────
 DATA_MODE_LABELS = {
-    "full":        ("🟢 Full ECCM",     "Real CSV — all metrics fully accurate."),
-    "embedded":    ("🟡 Full ECCM",     "Embedded training sample used — accurate."),
-    "synthetic":   ("🟠 Partial ECCM",  "Synthetic data — FSC is approximate. Upload a CSV for best results."),
-    "pscrsc_only": ("🔴 Minimal ECCM",  "No data — FSC imputed from history. Only PSC and RSC directly measured."),
+    "full":        ("🟢 Full ECCM",     "Real CSV - all metrics fully accurate."),
+    "embedded":    ("🟡 Full ECCM",     "Embedded training sample used - accurate."),
+    "synthetic":   ("🟠 Partial ECCM",  "Synthetic data - FSC is approximate. Upload a CSV for best results."),
+    "pscrsc_only": ("🔴 Minimal ECCM",  "No data - FSC imputed from history. Only PSC and RSC directly measured."),
 }
 
 def resolve_data(model_a, uploaded_X):
@@ -230,7 +230,7 @@ def weights_bar(w: dict, task: str):
         textposition="outside",
     ))
     fig.update_layout(
-        title=f"ECCM Sub-metric Weights — {task}",
+        title=f"ECCM Sub-metric Weights - {task}",
         yaxis=dict(range=[0, 0.75]),
         height=270, margin=dict(t=45, b=20),
     )
@@ -268,29 +268,29 @@ def xai_narrative(psc, fsc, rsc, eccm, a_n, b_n, task):
         return "high" if v >= 0.9 else "moderate" if v >= 0.65 else "low"
 
     psc_desc = {
-        "high":     "very similar internal structure — both models weight features almost identically.",
-        "moderate": "moderately similar structure — some divergence in how each model learned from data.",
-        "low":      "quite different structure — the models have learned very different internal representations.",
+        "high":     "very similar internal structure - both models weight features almost identically.",
+        "moderate": "moderately similar structure - some divergence in how each model learned from data.",
+        "low":      "quite different structure - the models have learned very different internal representations.",
     }[level(psc)]
     fsc_desc = {
         "high":     "predictions agree very closely on the same inputs.",
         "moderate": "predictions broadly agree, with divergence on harder borderline cases.",
-        "low":      "predictions frequently disagree — the models make different calls on the same data.",
+        "low":      "predictions frequently disagree - the models make different calls on the same data.",
     }[level(fsc)]
     rsc_desc = {
-        "high":     "nearly identical feature ranking — both models rely on the same features in the same order.",
+        "high":     "nearly identical feature ranking - both models rely on the same features in the same order.",
         "moderate": "broadly similar feature ranking, with some differences in emphasis.",
-        "low":      "very different feature priorities — each model relies on a largely different set of signals.",
+        "low":      "very different feature priorities - each model relies on a largely different set of signals.",
     }[level(rsc)]
 
     verdict = {
-        "High Compatibility":   f"Strong merge candidate — empirical success rate at this ECCM level is **{p:.0%}**.",
-        "Medium Compatibility": f"Borderline — empirical success rate is **{p:.0%}**. Check the blend curve before merging.",
-        "Low Compatibility":    f"Poor compatibility — empirical success rate is only **{p:.0%}**. Merging is likely to hurt performance.",
+        "High Compatibility":   f"Strong merge candidate - empirical success rate at this ECCM level is **{p:.0%}**.",
+        "Medium Compatibility": f"Borderline - empirical success rate is **{p:.0%}**. Check the blend curve before merging.",
+        "Low Compatibility":    f"Poor compatibility - empirical success rate is only **{p:.0%}**. Merging is likely to hurt performance.",
     }[tier]
 
     return "\n".join([
-        f"**{a_n} + {b_n}** — ECCM **{eccm:.3f}** · {emoji} {tier} · estimated success **{p:.0%}**",
+        f"**{a_n} + {b_n}** - ECCM **{eccm:.3f}** · {emoji} {tier} · estimated success **{p:.0%}**",
         "",
         f"**PSC {psc:.3f}** — {psc_desc}",
         f"**FSC {fsc:.3f}** — {fsc_desc}",
@@ -302,7 +302,7 @@ def xai_narrative(psc, fsc, rsc, eccm, a_n, b_n, task):
 # ── EPC evidence table ────────────────────────────────────────────────────────
 def epc_table(neighbours):
     if not neighbours:
-        st.caption("EPC evidence unavailable — history not loaded.")
+        st.caption("EPC evidence unavailable - history not loaded.")
         return
     rows = [{
         "#": n["rank"],
@@ -317,7 +317,7 @@ def epc_table(neighbours):
 # PAGE
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("🧬 Mergence")
-st.caption("Evolutionary Compatibility & Co-evolution Metric — Model Merge Platform")
+st.caption("Evolutionary Compatibility & Co-evolution Metric - Model Merge Platform")
 
 tab1, tab2, tab3 = st.tabs([
     "🔬 Simulator",
@@ -333,13 +333,13 @@ with tab1:
 
     with st.expander("📑 User Manual"):
         st.markdown("""
-1. **Pick your task** (Fraud / Churn / Unknown) — this sets the scoring weights and tier thresholds.
-2. **Upload Model A and Model B** — `.pkl` files from a trained `RandomForestClassifier`.
-3. **Optionally upload a validation CSV** — the coloured badge below the uploader tells you which data mode is active.  
+1. **Pick your task** (Fraud / Churn / Unknown) - this sets the scoring weights and tier thresholds.
+2. **Upload Model A and Model B** - `.pkl` files from a trained `RandomForestClassifier`.
+3. **Optionally upload a validation CSV** - the coloured badge below the uploader tells you which data mode is active.  
    No CSV? The app uses a sample embedded in the model automatically.
-4. **Click ▶ Run Compatibility Check** — you get a tier badge, four scores, an EPC evidence table, and a plain-English explanation.
+4. **Click ▶ Run Compatibility Check** - you get a tier badge, four scores, an EPC evidence table, and a plain-English explanation.
 5. **Visit 📊 Pair Analysis** for deeper charts (radar, blend curve, feature charts, prediction distributions).
-6. **Optionally merge** — use the slider to pick a blend ratio, click Merge, download the result.
+6. **Optionally merge** - use the slider to pick a blend ratio, click Merge, download the result.
         """)
 
     st.divider()
@@ -358,7 +358,7 @@ with tab1:
     epc_trainer = load_epc(task)
 
     # ── Uploads ───────────────────────────────────────────────────────────────
-    st.subheader("Step 1 — Upload")
+    st.subheader("Step 1 - Upload")
     c1, c2 = st.columns(2)
     with c1:
         file_a = st.file_uploader("Model A (.pkl)", type=["pkl"], key="fa")
@@ -399,7 +399,7 @@ with tab1:
     st.info(f"{badge} — {desc}")
 
     # ── Compatibility check ───────────────────────────────────────────────────
-    st.subheader("Step 2 — Check Compatibility")
+    st.subheader("Step 2 - Check Compatibility")
 
     if st.button("▶ Run Compatibility Check", type="primary", key="run"):
         with st.spinner("Computing ECCM…"):
@@ -434,12 +434,12 @@ with tab1:
         f"<div style='padding:12px 18px;border-radius:8px;"
         f"background:{hex_to_rgba(colour,0.12)};border-left:5px solid {colour};"
         f"font-size:1.1rem;font-weight:600;'>"
-        f"{emoji} {tier} — ECCM {ec:.4f}"
+        f"{emoji} {tier} - ECCM {ec:.4f}"
         f"&nbsp;&nbsp;·&nbsp;&nbsp;Estimated success probability: {s['p_success']:.0%}"
         f"</div>",
         unsafe_allow_html=True,
     )
-    st.caption("Success probability is empirically calibrated from 276 historical merge experiments for this task — not a guess.")
+    st.caption("Success probability is empirically calibrated from 276 historical merge experiments for this task - not a guess.")
     st.markdown("")
 
     # Four metric cards
@@ -458,10 +458,10 @@ with tab1:
     st.subheader("🔍 EPC Evidence")
     rel = s.get("epc_reliability", 0.5)
     rel_icon = "🟢" if rel >= 0.7 else "🟡" if rel >= 0.4 else "🔴"
-    st.caption(f"{rel_icon} EPC reliability: {rel:.0%} — "
+    st.caption(f"{rel_icon} EPC reliability: {rel:.0%} - "
                + ("close match to historical data." if rel >= 0.7 else
                   "moderate match to historical data." if rel >= 0.4 else
-                  "this pair is unlike past merges — EPC estimate is speculative."))
+                  "this pair is unlike past merges - EPC estimate is speculative."))
     epc_table(s.get("epc_neighbours", []))
     st.caption("Each row is a historical merge whose PSC/FSC/RSC scores were nearest to this pair. "
                "The EPC prediction is a weighted average of their Improvement values.")
@@ -472,15 +472,15 @@ with tab1:
 
     # ── Merge ─────────────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Step 3 — Merge  (requires labelled CSV)")
+    st.subheader("Step 3 - Merge  (requires labelled CSV)")
 
     if st.session_state["y"] is None:
         st.info("Upload a labelled validation CSV to enable this step.")
     else:
         if tier == "Low Compatibility":
-            st.error("⛔ High risk — merging is likely to reduce performance.")
+            st.error("⛔ High risk - merging is likely to reduce performance.")
         elif tier == "Medium Compatibility":
-            st.warning("⚠️ Moderate risk — check the blend curve on the Pair Analysis tab first.")
+            st.warning("⚠️ Moderate risk - check the blend curve on the Pair Analysis tab first.")
 
         proceed = True
         if tier in ("Low Compatibility", "Medium Compatibility"):
@@ -508,7 +508,7 @@ with tab1:
                 rc1.metric(f"{a_n} AUC",  f"{auc_a:.6f}")
                 rc2.metric(f"{b_n} AUC",  f"{auc_b:.6f}")
                 rc3.metric("Merged AUC",  f"{auc_m:.6f}", delta=f"{delta:+.6f} vs best parent")
-                st.caption("A positive delta means the merged model beat the better parent — the merge succeeded.")
+                st.caption("A positive delta means the merged model beat the better parent - the merge succeeded.")
 
                 buf = io.BytesIO()
                 joblib.dump(BlendedModel(st.session_state["ma"], st.session_state["mb"], blend_r), buf)
@@ -518,7 +518,7 @@ with tab1:
                     file_name=f"merged_{a_n}_{b_n}_r{blend_r:.2f}.pkl",
                     mime="application/octet-stream",
                 )
-                st.caption("The merged model is sklearn-compatible — it has `predict_proba`, `feature_importances_`, "
+                st.caption("The merged model is sklearn-compatible - it has `predict_proba`, `feature_importances_`, "
                            "and can be re-uploaded into this Simulator.")
 
 
@@ -580,8 +580,8 @@ with tab2:
         st.subheader("ECCM Sub-metric Weights")
         st.plotly_chart(weights_bar(w, t), use_container_width=True)
         task_note = {
-            "fraud":   "For fraud, FSC dominates — prediction agreement is the strongest predictor of merge success.",
-            "churn":   "For churn, weights are more balanced — structural signals (PSC, RSC) carry more weight.",
+            "fraud":   "For fraud, FSC dominates - prediction agreement is the strongest predictor of merge success.",
+            "churn":   "For churn, weights are more balanced - structural signals (PSC, RSC) carry more weight.",
             "unknown": "Combined weights used (learned from both fraud and churn experiments).",
         }.get(t, "")
         st.caption(
@@ -617,9 +617,9 @@ with tab2:
         overlap = len(top_a & top_b)
         st.caption(
             f"**Top-10 feature overlap: {overlap}/10.** "
-            + ("High — same signals, low merge risk." if overlap >= 7 else
-               "Moderate — some shared, some unique signals." if overlap >= 4 else
-               "Low — very different signals; key driver of low RSC.")
+            + ("High - same signals, low merge risk." if overlap >= 7 else
+               "Moderate - some shared, some unique signals." if overlap >= 4 else
+               "Low - very different signals; key driver of low RSC.")
         )
 
     # ── Row 4: Prediction distributions (only if labels available) ────────────
@@ -641,7 +641,7 @@ with tab2:
             st.caption(
                 "Each dot = one validation sample. "
                 "Dots on the diagonal = both models gave the same probability (perfect agreement). "
-                "Off-diagonal dots = disagreement — these samples are most sensitive to the blend ratio. "
+                "Off-diagonal dots = disagreement - these samples are most sensitive to the blend ratio. "
                 "Red = class 1 (fraud / churn), blue = class 0."
             )
         except Exception as e:
@@ -660,7 +660,7 @@ with tab3:
     st.header("About Mergence")
     st.markdown("""
 **Mergence** is a BEng Software Engineering thesis project (IIT / University of Westminster, 2026)
-by Trevin Joseph. It proposes **ECCM** — the *Evolutionary Compatibility & Co-evolution Metric* —
+by Trevin Joseph. It proposes **ECCM** — the *Evolutionary Compatibility & Co-evolution Metric* -
 a composite score that predicts, before execution, whether merging two trained models will improve performance.
 
 ---

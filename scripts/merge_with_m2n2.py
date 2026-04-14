@@ -119,7 +119,7 @@ class M2N2Pipeline:
             )
         return self._cache[model_id]
 
-    def run(self, top_pairs: pd.DataFrame, fixed_csv: str) -> pd.DataFrame:
+    def run(self, top_pairs: pd.DataFrame, fixed_csv: str, output_filename: str = "m2n2_results.csv",) -> pd.DataFrame:
         """
         Args:
             top_pairs: [model_a, model_b, eccm] from select_top_pairs()
@@ -170,8 +170,9 @@ class M2N2Pipeline:
             )
 
         df = pd.DataFrame(rows)
-        df.to_csv(f"{self.output_dir}/m2n2_results.csv", index=False)
-        print(f"\nSaved {len(df)} results → {self.output_dir}/m2n2_results.csv")
+        out_path = Path(self.output_dir) / output_filename
+        df.to_csv(out_path, index=False)
+        print(f"\nSaved {len(df)} results → {out_path}")
         return df
 
 

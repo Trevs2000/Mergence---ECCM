@@ -5,7 +5,7 @@ Generates plain-English XAI narratives and bar-chart plots for
 the top-N merge pairs.  Used by run_xai_global.py.
 
 Simplified from original:
-  - Removed load_model() (unused — models are never loaded here)
+  - Removed load_model() (unused - models are never loaded here)
   - Merged row_fixed and row_m2n2 into a single joined row (as run_xai_global
     already does the join before calling these functions)
   - Removed redundant branching in explain_pair_global

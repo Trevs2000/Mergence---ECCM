@@ -1,216 +1,229 @@
-from typing import Dict
-import pandas as pd
-import numpy as np
-from sklearn.metrics import roc_auc_score
-import joblib
-from pathlib import Path
-from itertools import combinations
-from datetime import datetime
-import os
+"""
+merge_and_evaluate.py
 
+Fixed-ratio merge experiment for fraud and churn tasks.
+
+Design decisions:
+  - Only v00–v23 models are used as merge candidates.
+  - Benchmark models (v100–v104) are evaluated separately via
+    evaluate_baselines() — they are never merge candidates.
+  - No BlendedModel wrapper class is needed here: we only need
+    the blended probability array to compute AUC, so a one-liner
+    blend_predict() replaces SimpleMerger entirely.
+  - ECCM sub-metrics are computed ONCE per pair (they don't change
+    across blend ratios), saving 4× redundant computation.
+  - All global execution code is inside `if __name__ == "__main__"`
+    so importing this module does not trigger any computation.
+
+Usage:
+    python scripts/merge_and_evaluate.py
+"""
+
+import os
+from datetime import datetime
+from itertools import combinations
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split
 from metrics.eccm import ECCMCalculator
 
-class SimpleMerger:
+# ── Constants ─────────────────────────────────────────────────────────────────
+BLEND_RATIOS        = [0.3, 0.4, 0.5, 0.6, 0.7]
+MAIN_VARIANT_RANGE  = range(0, 24)    # v00–v23 are merge candidates
+BENCH_VARIANT_RANGE = range(100, 105) # v100–v104 are evaluation-only
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def load_models_by_range(models_dir: str, variant_range) -> dict:
     """
-    Simple model merging: average predictions.
+    Load model pkl files whose numeric suffix falls within variant_range.
 
-    Why simple?
-    - Fast (instant)
-    - Baseline quality
-    - Gets data for EPC training
-
-    Later (Phase 3): Swapping with M2N2 optimization.
+    Example:
+        load_models_by_range('./models/fraud', range(0, 24))
+        → {'fraud_v00': <RF>, 'fraud_v01': <RF>, ...}
     """
+    models = {}
+    for pkl in sorted(Path(models_dir).glob("*.pkl")):
+        parts = pkl.stem.rsplit("_v", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            vid = int(parts[1])
+        except ValueError:
+            continue
+        if vid in variant_range:
+            models[pkl.stem] = joblib.load(pkl)
+    return models
 
-    @staticmethod
-    def create_merged_model(model_a, model_b, blend_ratio: float = 0.5):
-        """
-        Create merged model that averages predictions.
 
-        blend_ratio: weight for model_a
-                    (1 - blend_ratio) for model_b
-        """
-        class BlendedModel:
-            def __init__(self, m_a, m_b, ratio):
-                self.m_a = m_a
-                self.m_b = m_b
-                self.ratio = ratio
-
-            def predict_proba(self, X):
-                p_a = self.m_a.predict_proba(X)
-                p_b = self.m_b.predict_proba(X)
-                return self.ratio * p_a + (1 - self.ratio) * p_b
-
-            def predict(self, X):
-                proba = self.predict_proba(X)
-                return (proba[:, 1] > 0.5).astype(int)
-
-        return BlendedModel(model_a, model_b, blend_ratio)
-
+# ── Core pipeline ─────────────────────────────────────────────────────────────
 class MergePipeline:
     """
-    Complete merge pipeline:
-    1. Load models
-    2. Merge all pairs
-    3. Evaluate merged models
-    4. Compute ECCM metrics
-    5. Save results
+    Runs the fixed-ratio merge experiment for a single task.
+
+    For every C(24,2)=276 unordered pair:
+      1. Compute ECCM sub-metrics once per pair (PSC, FSC, RSC, ECCM)
+      2. For each of 5 blend ratios: record merged AUC and improvement
+      3. Save all 1380 rows to CSV
     """
 
-    def __init__(self, models_dir: str, X_val: np.ndarray, y_val: np.ndarray,
-                 eccm_calc, output_dir: str = './results/merges'):
+    def __init__(
+        self,
+        models_dir: str,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        task: str = "unknown",
+        output_dir: str = "./results/merges",
+    ):
         self.models_dir = models_dir
-        self.X_val = X_val
-        self.y_val = y_val
-        self.eccm_calc = eccm_calc
+        self.X_val      = X_val
+        self.y_val      = y_val
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        self.eccm_calc  = ECCMCalculator(task=task)
 
-        self.results = []
-
-    def load_models(self) -> Dict[str, object]:
+    def run(self, num_pairs: int = 276) -> pd.DataFrame:
         """
-        Load only main models v00–v23.
-        Exclude benchmark models v100–v104.
+        Run all merge experiments.
+
+        Args:
+            num_pairs: cap on number of pairs tested (max 276)
+
+        Returns:
+            DataFrame: one row per (pair × ratio), up to 1380 rows
         """
-        models = {}
-        for pkl_file in Path(self.models_dir).glob("*.pkl"):
-            stem = pkl_file.stem          #e.g.: 'fraud_v00', 'fraud_v100'
+        models    = load_models_by_range(self.models_dir, MAIN_VARIANT_RANGE)
+        pairs     = list(combinations(sorted(models.keys()), 2))[:num_pairs]
 
-            # Split on the last '_v'
-            parts = stem.rsplit("_v", 1)
-            if len(parts) != 2:
-                continue
+        print(f"\n{len(pairs)} pairs × {len(BLEND_RATIOS)} ratios = "
+              f"{len(pairs) * len(BLEND_RATIOS)} experiments\n")
 
-            variant_str = parts[1]       #'00', '15', '100', '101' ...
-            try:
-                variant_id = int(variant_str)
-            except ValueError:
-                continue
-
-        # Keep only 0–23 and skip 100–104 
-            if 0 <= variant_id < 24:
-                models[stem] = joblib.load(pkl_file)
-
-        print(f"Loaded {len(models)} models from {self.models_dir}")
-        return models
-
-    def evaluate_merge(self, model_a, model_b, merged_model,
-                      model_a_id: str, model_b_id: str) -> Dict:
-        """
-        Evaluate merged model and compute all metrics.
-        """
-        # Get predictions
-        y_proba_a = model_a.predict_proba(self.X_val)[:, 1]
-        y_proba_b = model_b.predict_proba(self.X_val)[:, 1]
-        y_proba_merged = merged_model.predict_proba(self.X_val)[:, 1]
-
-        # Compute AUC
-        auc_a = roc_auc_score(self.y_val, y_proba_a)
-        auc_b = roc_auc_score(self.y_val, y_proba_b)
-        auc_merged = roc_auc_score(self.y_val, y_proba_merged)
-
-        # Determine success
-        best_parent_auc = max(auc_a, auc_b)
-        improvement = auc_merged - best_parent_auc
-        success = 1 if improvement > 0 else 0
-
-        # Compute ECCM metrics
-        eccm_scores = self.eccm_calc.compute(
-            model_a, model_b, self.X_val
-        ) #took off , epc_pred=0.5 to compute eccm with data driven ratios
-
-        result = {
-            'model_a': model_a_id,
-            'model_b': model_b_id,
-            'auc_a': float(auc_a),
-            'auc_b': float(auc_b),
-            'auc_merged': float(auc_merged),
-            'improvement': float(improvement),
-            'success': int(success),
-            'psc': eccm_scores['psc'],
-            'fsc': eccm_scores['fsc'],
-            'rsc': eccm_scores['rsc'],
-            'eccm': eccm_scores['eccm'],
-            'timestamp': datetime.now().isoformat()
-        }
-
-        return result
-
-    def run(self, num_pairs: int = 276):
-        """Run all merge experiments.
-        - num_pairs: how many unique model pairs to evaluate (max C(24,2)=276)
-        - For each pair, we test blend ratios in [0.3, 0.4, 0.5, 0.6, 0.7]
-        """
-
-        models = self.load_models()
-        model_ids = sorted(list(models.keys()))
-
-        # All unordered pairs of models
-        from itertools import combinations
-        all_pairs = list(combinations(model_ids, 2))
-        pairs = all_pairs[:num_pairs]
-
-        print(f"\nRunning {len(pairs)} pairs × 5 blend ratios...\n")
-
+        rows = []
         for i, (mid_a, mid_b) in enumerate(pairs, 1):
-            model_a = models[mid_a]
-            model_b = models[mid_b]
+            ma, mb = models[mid_a], models[mid_b]
 
-            for ratio in [0.3, 0.4, 0.5, 0.6, 0.7]: #addind different blending ratios
-                merged = SimpleMerger.create_merged_model(
-                    model_a, model_b, blend_ratio=ratio
-                )
+            # ECCM metrics are the same for all blend ratios — compute once
+            eccm = self.eccm_calc.compute(ma, mb, X=self.X_val)
 
-                result = self.evaluate_merge(
-                    model_a, model_b, merged, mid_a, mid_b
-                )
-                result["blend_ratio"] = ratio
-                self.results.append(result)
+            pa      = ma.predict_proba(self.X_val)[:, 1]
+            pb      = mb.predict_proba(self.X_val)[:, 1]
+            auc_a   = roc_auc_score(self.y_val, pa)
+            auc_b   = roc_auc_score(self.y_val, pb)
+            best    = max(auc_a, auc_b)
 
-            print(f"{i:3d}. {mid_a} + {mid_b}  (tested 5 ratios)") #276 pairs * 5 ratios = 1380 experiments
+            for ratio in BLEND_RATIOS:
+                auc_m = roc_auc_score(self.y_val, ratio * pa + (1 - ratio) * pb)
+                impr  = auc_m - best
+                rows.append({
+                    "model_a":     mid_a,
+                    "model_b":     mid_b,
+                    "auc_a":       round(auc_a,  10),
+                    "auc_b":       round(auc_b,  10),
+                    "auc_merged":  round(auc_m,  10),
+                    "improvement": round(impr,   10),
+                    "success":     int(impr > 0),
+                    "psc":         eccm["psc"],
+                    "fsc":         eccm["fsc"],
+                    "rsc":         eccm["rsc"],
+                    "eccm":        eccm["eccm"],
+                    "blend_ratio": ratio,
+                    "timestamp":   datetime.now().isoformat(),
+                })
 
-        # Save all results to CSV
-        results_df = pd.DataFrame(self.results)
+            print(f"  {i:3d}. {mid_a} + {mid_b}")
+
+        df       = pd.DataFrame(rows)
         csv_path = f"{self.output_dir}/merge_results_new_eccm.csv"
-        results_df.to_csv(csv_path, index=False)
-        print(f"\nSaved {len(self.results)} results to {csv_path}")
+        df.to_csv(csv_path, index=False)
+        print(f"\nSaved {len(df)} rows → {csv_path}")
+        return df
 
-        return results_df
 
-from sklearn.model_selection import train_test_split
+# ── Baseline evaluation (evaluation-only, never merged) ───────────────────────
+def evaluate_baselines(
+    models_dir: str,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    task: str,
+    output_dir: str,
+) -> pd.DataFrame:
+    """
+    Evaluate benchmark RF models (v100–v104) on the validation set.
 
-eccm_calc = ECCMCalculator()
+    Purpose: provide a pre/post-merge comparison baseline showing whether
+    the merged model outperforms a stable single-seed RF variant.
+    These models are NEVER used as merge candidates.
 
-fraud_df = pd.read_csv('./data/fraud_preprocessed.csv')
-X = fraud_df.drop('Class', axis=1).values
-y = fraud_df['Class'].values
+    Returns:
+        DataFrame saved to baseline_results.csv
+    """
+    bench_models = load_models_by_range(models_dir, BENCH_VARIANT_RANGE)
+    if not bench_models:
+        print("  No benchmark models found (expected v100–v104).")
+        return pd.DataFrame(columns=["model_id", "model_type", "auc", "task"])
 
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=0, stratify=y
-)
+    rows = []
+    for mid, model in sorted(bench_models.items()):
+        auc = roc_auc_score(y_val, model.predict_proba(X_val)[:, 1])
+        rows.append({"model_id": mid, "model_type": "benchmark_rf",
+                     "auc": round(auc, 10), "task": task})
+        print(f"  Benchmark {mid}: AUC={auc:.6f}")
 
-merge_pipeline = MergePipeline(
-    models_dir='./models/fraud',
-    X_val=X_val,
-    y_val=y_val,
-    eccm_calc=eccm_calc,
-    output_dir='./results/merges/fraud'
-)
+    df       = pd.DataFrame(rows)
+    csv_path = f"{output_dir}/baseline_results.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Saved {len(df)} baseline rows → {csv_path}")
+    return df
 
-results_df = merge_pipeline.run(num_pairs=276)
 
-churn_val = pd.read_csv('./data/churn_val_with_churn_col.csv')
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
 
-X_val = churn_val.drop('Churn', axis=1).values
-y_val = churn_val['Churn'].values
+    # ── Fraud ──────────────────────────────────────────────────────────────────
+    fraud_df = pd.read_csv("./data/fraud_preprocessed.csv")
+    X_f = fraud_df.drop("Class", axis=1).values
+    y_f = fraud_df["Class"].values
+    _, X_val_f, _, y_val_f = train_test_split(
+        X_f, y_f, test_size=0.2, random_state=0, stratify=y_f
+    )
 
-merge_pipeline2 = MergePipeline(
-    models_dir='./models/churn',
-    X_val=X_val,
-    y_val=y_val,
-    eccm_calc=eccm_calc,
-    output_dir='./results/merges/churn'
-)
+    MergePipeline(
+        models_dir="./models/fraud",
+        X_val=X_val_f,
+        y_val=y_val_f,
+        task="fraud",
+        output_dir="./results/merges/fraud",
+    ).run(num_pairs=276)
 
-results_df2 = merge_pipeline2.run(num_pairs=276)
+    evaluate_baselines(
+        models_dir="./models/fraud",
+        X_val=X_val_f,
+        y_val=y_val_f,
+        task="fraud",
+        output_dir="./results/merges/fraud",
+    )
+
+    # ── Churn ──────────────────────────────────────────────────────────────────
+    churn_val = pd.read_csv("./data/churn_val_with_churn_col.csv")
+    X_val_c   = churn_val.drop("Churn", axis=1).values
+    y_val_c   = churn_val["Churn"].values
+
+    MergePipeline(
+        models_dir="./models/churn",
+        X_val=X_val_c,
+        y_val=y_val_c,
+        task="churn",
+        output_dir="./results/merges/churn",
+    ).run(num_pairs=276)
+
+    evaluate_baselines(
+        models_dir="./models/churn",
+        X_val=X_val_c,
+        y_val=y_val_c,
+        task="churn",
+        output_dir="./results/merges/churn",
+    )

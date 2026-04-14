@@ -1,11 +1,8 @@
 """
-run_xai_global.py — CLI runner for global XAI reports.
+run_xai_global.py - CLI runner for global XAI reports.
 
 Joins fixed-ratio results with CMA-ES results, picks the top-N pairs
 by ECCM, prints a narrative explanation, and saves bar-chart PNGs.
-
-Usage:
-    python scripts/run_xai_global.py
 """
 
 import pandas as pd
@@ -21,7 +18,7 @@ def run_for_task(task: str, top_n: int = 5):
     fixed  = load_fixed_results(task)
     m2n2   = load_m2n2_results(task)
 
-    # Join on model_a + model_b; suffixes disambiguate shared column names
+    #Join on model_a + model_b; suffixes disambiguate shared column names
     joined = fixed.merge(
         m2n2, on=["model_a", "model_b"], suffixes=("_fixed", "_opt")
     )
