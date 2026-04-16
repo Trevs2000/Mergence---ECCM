@@ -1,5 +1,5 @@
 """
-epc.py — Evolutionary Pressure Compatibility (EPC)
+epc.py - Evolutionary Pressure Compatibility (EPC)
 
 Uses k-Nearest Neighbours over merge history instead of a frozen RF regressor.
 
@@ -8,7 +8,7 @@ Why k-NN?
   - Self-updating: add a row to the history CSV and EPC immediately improves
   - Honest uncertainty: if the query pair is unlike any historical pair,
     the reliability score drops and the UI shows a warning
-  - No retraining needed — ever
+  - No retraining needed
 
 The RF model is still trained internally so that feature_importances_ can be
 extracted for ECCM weight derivation (train_epc.py reads these weights).
@@ -65,9 +65,9 @@ class EPCTrainer:
         k-NN contextual prediction.
 
         Returns:
-            epc_pred    — weighted average improvement of k neighbours
-            reliability — 0..1; low = query is far from all history
-            neighbours  — list of dicts (shown as evidence table in the UI)
+            epc_pred    - weighted average improvement of k neighbours
+            reliability - 0..1; low = query is far from all history
+            neighbours  - list of dicts (shown as evidence table in the UI)
         """
         if self._history is None or len(self._history) == 0:
             # RF fallback if history was never loaded

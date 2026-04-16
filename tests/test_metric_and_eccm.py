@@ -18,7 +18,7 @@ def test_fsc_returns_value_between_0_and_1(model_a, model_b, val_X):
 
 
 def test_fsc_works_with_embedded_sample(model_a, model_b):
-    # model_a.X_train_sample is set in conftest — FSC should not raise
+    # model_a.X_train_sample is set in conftest, FSC should not raise.
     score = FSCCalculator(strategy="correlation").compute(
         model_a, model_b, model_a.X_train_sample
     )

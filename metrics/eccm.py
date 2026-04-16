@@ -1,5 +1,5 @@
 """
-eccm.py — Evolutionary Compatibility & Co-evolution Metric (ECCM)
+eccm.py - Evolutionary Compatibility & Co-evolution Metric (ECCM)
 
 ECCM = w_psc × PSC + w_fsc × FSC + w_rsc × RSC + w_epc × EPC
 
@@ -20,9 +20,9 @@ from .epc import EPCTrainer
 
 # ── Task-specific weights ─────────────────────────────────────────────────────
 # Derived from separate per-task RandomForest EPC models.
-# Fraud: FSC dominates (0.526) — prediction agreement is the strongest
+# Fraud: FSC dominates (0.526) - prediction agreement is the strongest
 #        predictor of merge success when models vary widely in behaviour.
-# Churn: more balanced — churn models are structurally very similar, so
+# Churn: more balanced, churn models are structurally very similar, so
 #        PSC and RSC carry more signal than FSC alone.
 TASK_WEIGHTS = {
     "fraud":   {"w_psc": 0.284, "w_fsc": 0.526, "w_rsc": 0.190, "w_epc": 0.0},

@@ -1,5 +1,5 @@
 """
-train_epc.py — Train per-task EPC models and export ECCM weights.
+train_epc.py - Train per-task EPC models and export ECCM weights.
 
 Trains three EPCTrainer instances:
   - fraud-only   → epc_model_fraud.pkl

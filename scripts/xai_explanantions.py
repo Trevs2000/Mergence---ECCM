@@ -86,7 +86,7 @@ def plot_pair(row: pd.Series, task: str, out_dir: str):
            [row["psc"], row["fsc"], row["rsc"]],
            color=["#4c72b0", "#55a868", "#c44e52"])
     ax.set_ylim(0, 1)
-    ax.set_title(f"{task} — {a} + {b}")
+    ax.set_title(f"{task} - {a} + {b}")
     ax.set_ylabel("Score")
     fig.tight_layout()
     fig.savefig(f"{out_dir}/{stem}_metrics.png", dpi=150)
@@ -99,7 +99,7 @@ def plot_pair(row: pd.Series, task: str, out_dir: str):
     ax.bar(labels, vals, color=["#4c72b0", "#55a868", "#c44e52"])
     ax.set_ylim(min(vals) - 0.001, max(vals) + 0.001)
     ax.tick_params(axis="x", rotation=20)
-    ax.set_title(f"{task} — {a} + {b} AUC")
+    ax.set_title(f"{task} - {a} + {b} AUC")
     ax.set_ylabel("AUC")
     fig.tight_layout()
     fig.savefig(f"{out_dir}/{stem}_auc.png", dpi=150)

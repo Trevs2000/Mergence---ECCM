@@ -54,9 +54,9 @@ class CMAESMerger:
     def optimise(self, model_a, model_b, X_val: np.ndarray, y_val: np.ndarray) -> dict:
         """
         Returns:
-            best_ratio    — optimal blend weight for model_a  (float in [0,1])
-            best_auc      — AUC at optimal ratio
-            n_evaluations — total fitness evaluations used
+            best_ratio    : optimal blend weight for model_a  (float in [0,1])
+            best_auc      : AUC at optimal ratio
+            n_evaluations : total fitness evaluations used
         """
         pa = model_a.predict_proba(X_val)[:, 1]
         pb = model_b.predict_proba(X_val)[:, 1]

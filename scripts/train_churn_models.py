@@ -1,5 +1,5 @@
 """
-train_churn_models.py — Train all churn RF variants.
+train_churn_models.py - Train all churn RF variants.
 
 Same structure as train_fraud_models.py:
   v00–v23   Main variants  (merge candidates)
@@ -89,7 +89,7 @@ class ChurnModelTrainer:
     # ── Public methods ────────────────────────────────────────────────────────
 
     def train_main_variants(self) -> list:
-        """Train v00–v23 — merge candidates."""
+        """Train v00–v23 - merge candidates."""
         print(f"\nTraining {len(VARIANTS)} main churn variants...\n")
         for i, (n, d, s) in enumerate(VARIANTS):
             self.metadata.append(self._fit_and_save(i, n, d, s))
@@ -106,7 +106,7 @@ class ChurnModelTrainer:
     ) -> list:
         """
         Train v100–v104: stability benchmarks.
-        Evaluation only — never used as merge candidates.
+        Evaluation only - never used as merge candidates.
         """
         print(f"\nTraining {num_runs} benchmark variants (evaluation only)...\n")
         bench_meta = []

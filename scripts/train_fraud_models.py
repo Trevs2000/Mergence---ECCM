@@ -1,9 +1,9 @@
 """
-train_fraud_models.py — Train all fraud RF variants.
+train_fraud_models.py - Train all fraud RF variants.
 
 Model categories:
   v00–v23   Main variants (used for merging experiments)
-  v100–v104 Benchmark RF  (same hyperparams, different seeds — evaluation only)
+  v100–v104 Benchmark RF  (same hyperparams, different seeds - used for evaluation only)
   Logistic  Baseline      (evaluation only, not saved as pkl)
 
 The embedded X_train_sample_ attribute (200 stratified rows) is attached to
@@ -94,7 +94,7 @@ class FraudModelTrainer:
     # ── Public methods ────────────────────────────────────────────────────────
 
     def train_main_variants(self) -> list:
-        """Train v00–v23 — these are the merge candidates."""
+        """Train v00–v23 - these are the merge candidates."""
         print(f"\nTraining {len(VARIANTS)} main fraud variants...\n")
         for i, (n, d, s) in enumerate(VARIANTS):
             self.metadata.append(self._fit_and_save(i, n, d, s))
@@ -123,7 +123,7 @@ class FraudModelTrainer:
     def evaluate_logistic_baseline(self, variant_id: int = 999) -> dict:
         """
         Fit a logistic regression and report AUC.
-        Evaluation only — not saved as pkl, not used in merging.
+        Evaluation only - not saved as pkl, not used in merging.
         """
         X_tr, X_te, y_tr, y_te = train_test_split(
             self.X, self.y, test_size=0.2,

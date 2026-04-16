@@ -6,7 +6,7 @@ Fixed-ratio merge experiment for fraud and churn tasks.
 Design decisions:
   - Only v00–v23 models are used as merge candidates.
   - Benchmark models (v100–v104) are evaluated separately via
-    evaluate_baselines() — they are never merge candidates.
+    evaluate_baselines() - they are never merge candidates.
   - No BlendedModel wrapper class is needed here: we only need
     the blended probability array to compute AUC, so a one-liner
     blend_predict() replaces SimpleMerger entirely.
@@ -106,7 +106,7 @@ class MergePipeline:
         for i, (mid_a, mid_b) in enumerate(pairs, 1):
             ma, mb = models[mid_a], models[mid_b]
 
-            # ECCM metrics are the same for all blend ratios — compute once
+            # ECCM metrics are the same for all blend ratios - compute once
             eccm = self.eccm_calc.compute(ma, mb, X=self.X_val)
 
             pa      = ma.predict_proba(self.X_val)[:, 1]
