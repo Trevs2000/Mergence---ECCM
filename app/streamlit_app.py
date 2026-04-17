@@ -433,7 +433,6 @@ Weights are **task-specific**, learned from 1 380 historical merge experiments.
  
 | Component | What it shows |
 |-----------|--------------|
-| **SHAP Beeswarm** | Per-sample feature effects - direction and magnitude for each model |
 | **Mean SHAP Comparison** | Which features matter most to each model (SHAP-based, less biased than MDI) |
 | **SHAP Divergence** | Exactly which features each model prioritises differently - grounds the RSC score |
 | **EPC Evidence Table** | Which historical merges the EPC prediction is based on |
